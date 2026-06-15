@@ -303,6 +303,21 @@ func (m *MongoDB) ensureIndexes() {
 				{Keys: bson.D{{Key: "parentId", Value: 1}}, Options: options.Index().SetSparse(true)},
 			},
 		},
+		{
+			"stock_items",
+			[]mongo.IndexModel{
+				{Keys: bson.D{{Key: "locationId", Value: 1}, {Key: "category", Value: 1}}},
+				{Keys: bson.D{{Key: "tenantId", Value: 1}, {Key: "locationId", Value: 1}, {Key: "name", Value: 1}}, Options: options.Index().SetUnique(true)},
+			},
+		},
+		{
+			"stock_counts",
+			[]mongo.IndexModel{
+				{Keys: bson.D{{Key: "locationId", Value: 1}, {Key: "submittedAt", Value: -1}}},
+				{Keys: bson.D{{Key: "locationId", Value: 1}, {Key: "counts.stockItemId", Value: 1}, {Key: "submittedAt", Value: -1}}},
+				{Keys: bson.D{{Key: "tenantId", Value: 1}, {Key: "locationId", Value: 1}, {Key: "submittedAt", Value: -1}}},
+			},
+		},
 	}
 
 	// Collections where unique index failure is a data integrity risk
@@ -480,4 +495,12 @@ func (m *MongoDB) TelemetryEvents() *mongo.Collection {
 
 func (m *MongoDB) EventDefinitions() *mongo.Collection {
 	return m.Database.Collection("event_definitions")
+}
+
+func (m *MongoDB) StockItems() *mongo.Collection {
+	return m.Database.Collection("stock_items")
+}
+
+func (m *MongoDB) StockCounts() *mongo.Collection {
+	return m.Database.Collection("stock_counts")
 }

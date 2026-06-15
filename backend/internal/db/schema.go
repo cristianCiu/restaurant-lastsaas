@@ -33,6 +33,8 @@ func AllSchemas() []CollectionSchema {
 		usageEventsSchema(),
 		ssoConnectionsSchema(),
 		eventDefinitionsSchema(),
+		stockItemSchema(),
+		stockCountSchema(),
 	}
 }
 
@@ -591,6 +593,67 @@ func ssoConnectionsSchema() CollectionSchema {
 					"updatedAt": bson.M{
 						"bsonType": "date",
 					},
+				},
+			},
+		},
+	}
+}
+
+func stockItemSchema() CollectionSchema {
+	return CollectionSchema{
+		Collection: "stock_items",
+		Schema: bson.M{
+			"$jsonSchema": bson.M{
+				"bsonType": "object",
+				"required": bson.A{"tenantId", "locationId", "name", "category", "unit", "leadTimeDays", "lastModified", "createdAt", "updatedAt"},
+				"properties": bson.M{
+					"tenantId":    bson.M{"bsonType": "objectId"},
+					"locationId":  bson.M{"bsonType": "objectId"},
+					"name":        bson.M{"bsonType": "string", "minLength": 1, "maxLength": 200},
+					"category":    bson.M{"bsonType": "string", "minLength": 1, "maxLength": 100},
+					"unit":        bson.M{"bsonType": "string", "minLength": 1, "maxLength": 50},
+					"parLevel":    bson.M{"bsonType": "double"},
+					"leadTimeDays": bson.M{"bsonType": "int", "minimum": 1},
+					"lastModified": bson.M{"bsonType": "date"},
+					"createdAt":   bson.M{"bsonType": "date"},
+					"updatedAt":   bson.M{"bsonType": "date"},
+				},
+			},
+		},
+	}
+}
+
+func stockCountSchema() CollectionSchema {
+	return CollectionSchema{
+		Collection: "stock_counts",
+		Schema: bson.M{
+			"$jsonSchema": bson.M{
+				"bsonType": "object",
+				"required": bson.A{"tenantId", "locationId", "countedBy", "shift", "counts", "submittedAt", "createdAt"},
+				"properties": bson.M{
+					"tenantId":   bson.M{"bsonType": "objectId"},
+					"locationId": bson.M{"bsonType": "objectId"},
+					"countedBy":  bson.M{"bsonType": "objectId"},
+					"shift":      bson.M{"bsonType": "string", "enum": bson.A{"close", "lunch"}},
+					"counts": bson.M{
+						"bsonType": "array",
+						"minItems": 1,
+						"maxItems": 500,
+						"items": bson.M{
+							"bsonType": "object",
+							"required": bson.A{"stockItemId", "quantity", "unit"},
+							"properties": bson.M{
+								"stockItemId": bson.M{"bsonType": "objectId"},
+								"quantity":    bson.M{"bsonType": "double", "minimum": 0},
+								"unit":        bson.M{"bsonType": "string", "minLength": 1, "maxLength": 50},
+								"received":    bson.M{"bsonType": "double"},
+								"waste":       bson.M{"bsonType": "double"},
+							},
+						},
+					},
+					"notes":       bson.M{"bsonType": "string"},
+					"submittedAt": bson.M{"bsonType": "date"},
+					"createdAt":   bson.M{"bsonType": "date"},
 				},
 			},
 		},

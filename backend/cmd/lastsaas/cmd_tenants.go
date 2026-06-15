@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"lastsaas/internal/db"
@@ -12,6 +13,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -21,7 +23,8 @@ func cmdTenants() {
 
 Subcommands:
   list                        List all tenants
-  get <id-or-slug>            Show tenant details`)
+  get <id-or-slug>            Show tenant details
+  create                      Create a new tenant with an owner`)
 		os.Exit(1)
 	}
 
@@ -34,6 +37,8 @@ Subcommands:
 			os.Exit(1)
 		}
 		cmdTenantsGet(os.Args[3])
+	case "create":
+		cmdTenantsCreate()
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown tenants subcommand: %s\n", os.Args[2])
 		os.Exit(1)
@@ -142,6 +147,75 @@ func cmdTenantsList() {
 		)
 	}
 	fmt.Printf("\n%d tenants shown\n", len(tenants))
+}
+
+func cmdTenantsCreate() {
+	fs := flag.NewFlagSet("tenants create", flag.ExitOnError)
+	name := fs.String("name", "", "Tenant name (required)")
+	slug := fs.String("slug", "", "Tenant slug (auto-generated from name if empty)")
+	ownerEmail := fs.String("owner", "", "Existing user email to set as owner (required)")
+	fs.Parse(os.Args[3:])
+
+	if *name == "" || *ownerEmail == "" {
+		fmt.Fprintln(os.Stderr, "Usage: lastsaas tenants create --name <name> --owner <email> [--slug <slug>]")
+		fs.PrintDefaults()
+		os.Exit(1)
+	}
+
+	database, _, cleanup := connectDB()
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Look up owner
+	var owner models.User
+	if err := database.Users().FindOne(ctx, bson.M{"email": strings.TrimSpace(strings.ToLower(*ownerEmail))}).Decode(&owner); err != nil {
+		fmt.Fprintf(os.Stderr, "User not found: %s\n", *ownerEmail)
+		os.Exit(1)
+	}
+
+	tenantSlug := *slug
+	if tenantSlug == "" {
+		tenantSlug = strings.ToLower(strings.ReplaceAll(*name, " ", "-"))
+	}
+
+	now := time.Now()
+	tenant := models.Tenant{
+		ID:        primitive.NewObjectID(),
+		Name:      strings.TrimSpace(*name),
+		Slug:      tenantSlug,
+		IsActive:  true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if _, err := database.Tenants().InsertOne(ctx, tenant); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			fmt.Fprintf(os.Stderr, "A tenant with slug '%s' already exists\n", tenantSlug)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Failed to create tenant: %v\n", err)
+		os.Exit(1)
+	}
+
+	membership := models.TenantMembership{
+		ID:        primitive.NewObjectID(),
+		UserID:    owner.ID,
+		TenantID:  tenant.ID,
+		Role:      models.RoleOwner,
+		JoinedAt:  now,
+		UpdatedAt: now,
+	}
+	if _, err := database.TenantMemberships().InsertOne(ctx, membership); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create owner membership: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Tenant created successfully!")
+	fmt.Printf("  Name:  %s\n", tenant.Name)
+	fmt.Printf("  Slug:  %s\n", tenant.Slug)
+	fmt.Printf("  ID:    %s\n", tenant.ID.Hex())
+	fmt.Printf("  Owner: %s (%s)\n", owner.DisplayName, owner.Email)
 }
 
 func cmdTenantsGet(idOrSlug string) {

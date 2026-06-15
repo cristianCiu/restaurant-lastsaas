@@ -699,6 +699,52 @@ export interface UsageSummaryItem {
   count: number;
 }
 
+export interface StockItem {
+  id: string;
+  tenantId: string;
+  locationId: string;
+  name: string;
+  category: string;
+  unit: string;
+  parLevel?: number;
+  leadTimeDays: number;
+  lastModified: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StockCountEntry {
+  stockItemId: string;
+  quantity: number;
+  unit: string;
+  received?: number;
+  waste?: number;
+}
+
+export interface StockCount {
+  id: string;
+  tenantId: string;
+  locationId: string;
+  countedBy: string;
+  shift: 'close' | 'lunch';
+  counts: StockCountEntry[];
+  notes?: string;
+  submittedAt: string;
+  createdAt: string;
+}
+
+export interface ForecastItem {
+  stockItemId: string;
+  itemName: string;
+  category: string;
+  unit: string;
+  sevenDayAvg: number;
+  lastQty: number;
+  countDays: number;
+  suggestedOrderQty: number;
+  parLevel?: number;
+}
+
 export interface UsageSummary {
   periodStart: string;
   usage: UsageSummaryItem[];

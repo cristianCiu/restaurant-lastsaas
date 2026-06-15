@@ -25,6 +25,7 @@ const (
 	LogCatSystem   LogCategory = "system"
 	LogCatSecurity LogCategory = "security"
 	LogCatTenant   LogCategory = "tenant"
+	LogCatInventory LogCategory = "inventory"
 )
 
 type SystemLog struct {

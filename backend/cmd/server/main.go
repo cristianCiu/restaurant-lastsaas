@@ -650,6 +650,36 @@ func main() {
 	billingOwner.HandleFunc("/portal", billingHandler.Portal).Methods("POST")
 	billingOwner.HandleFunc("/cancel", billingHandler.CancelSubscription).Methods("POST")
 
+	// Inventory routes (require JWT + tenant)
+	inventoryHandler := handlers.NewInventoryHandler(database, sysLogger)
+	inventoryAPI := guarded.PathPrefix("/inventory").Subrouter()
+	inventoryAPI.Use(authMiddleware.RequireAuth)
+	inventoryAPI.Use(tenantMiddleware.RequireTenant)
+	inventoryAPI.HandleFunc("/stock-items", inventoryHandler.ListStockItems).Methods("GET")
+	inventoryAPI.HandleFunc("/stock-items", rateLimiter.RateLimitHandler(
+		middleware.InventoryWriteLimit,
+		func(r *http.Request) string { return middleware.GetClientIP(r) },
+		inventoryHandler.CreateStockItem,
+	)).Methods("POST")
+	inventoryAPI.HandleFunc("/stock-items/{id}", rateLimiter.RateLimitHandler(
+		middleware.InventoryWriteLimit,
+		func(r *http.Request) string { return middleware.GetClientIP(r) },
+		inventoryHandler.UpdateStockItem,
+	)).Methods("PUT")
+	inventoryAPI.HandleFunc("/stock-items/{id}", rateLimiter.RateLimitHandler(
+		middleware.InventoryWriteLimit,
+		func(r *http.Request) string { return middleware.GetClientIP(r) },
+		inventoryHandler.DeleteStockItem,
+	)).Methods("DELETE")
+	inventoryAPI.HandleFunc("/stock-counts", rateLimiter.RateLimitHandler(
+		middleware.InventorySyncLimit,
+		func(r *http.Request) string { return "stock-counts:" + middleware.GetClientIP(r) },
+		inventoryHandler.SubmitStockCount,
+	)).Methods("POST")
+	inventoryAPI.HandleFunc("/stock-counts", inventoryHandler.GetStockCount).Methods("GET")
+	inventoryAPI.HandleFunc("/stock-counts/history", inventoryHandler.GetStockCountHistory).Methods("GET")
+	inventoryAPI.HandleFunc("/forecast", inventoryHandler.GetForecast).Methods("GET")
+
 	// Admin routes — three tiers:
 	//   adminAPI   = root tenant + user role  (read-only access to all admin data)
 	//   adminWrite = root tenant + admin role (read-write: manage users, tenants, config, etc.)

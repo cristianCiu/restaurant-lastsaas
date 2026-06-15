@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AuthResponse, MFARequiredResponse, AuthProviders, ActiveSession, ActivityLogEntry, PasskeyCredential, ImpersonationResponse, TenantMember, TenantDetail, TenantListItem, UserListItem, Message, AboutInfo, SystemLog, ConfigVar, UserDetail, UserMembershipDetail, DeletePreflightResponse, Plan, EntitlementKeyInfo, PublicPlansResponse, CreditBundle, SystemNode, SystemMetric, FinancialTransaction, DailyMetricPoint, IntegrationCheck, APIKey, Webhook, WebhookDelivery, WebhookEventTypeInfo, BrandingConfig, MediaItem, CustomPage, Promotion, EligibleProduct, Announcement, UsageSummary, Invitation, FunnelData, CohortRow, EngagementData, KPIData, CustomEventData, EventTypeSummary, EventDefinition, SankeyData } from '../types';
+import type { AuthResponse, MFARequiredResponse, AuthProviders, ActiveSession, ActivityLogEntry, PasskeyCredential, ImpersonationResponse, TenantMember, TenantDetail, TenantListItem, UserListItem, Message, AboutInfo, SystemLog, ConfigVar, UserDetail, UserMembershipDetail, DeletePreflightResponse, Plan, EntitlementKeyInfo, PublicPlansResponse, CreditBundle, SystemNode, SystemMetric, FinancialTransaction, DailyMetricPoint, IntegrationCheck, APIKey, Webhook, WebhookDelivery, WebhookEventTypeInfo, BrandingConfig, MediaItem, CustomPage, Promotion, EligibleProduct, Announcement, UsageSummary, Invitation, FunnelData, CohortRow, EngagementData, KPIData, CustomEventData, EventTypeSummary, EventDefinition, SankeyData, StockItem, StockCount, StockCountEntry, ForecastItem } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -416,6 +416,25 @@ export const usageApi = {
 };
 
 // --- Billing ---
+export const inventoryApi = {
+  listStockItems: (locationId: string) =>
+    api.get<{ stockItems: StockItem[] }>('/inventory/stock-items', { params: { location_id: locationId } }).then(r => r.data),
+  createStockItem: (data: { locationId: string; name: string; category: string; unit: string; parLevel?: number; leadTimeDays?: number }) =>
+    api.post<{ stockItem: StockItem }>('/inventory/stock-items', data).then(r => r.data),
+  updateStockItem: (id: string, data: Partial<{ name: string; category: string; unit: string; parLevel: number; leadTimeDays: number }>) =>
+    api.put(`/inventory/stock-items/${id}`, data).then(r => r.data),
+  deleteStockItem: (id: string) =>
+    api.delete(`/inventory/stock-items/${id}`).then(r => r.data),
+  submitStockCount: (data: { locationId: string; shift: string; counts: StockCountEntry[]; notes?: string }) =>
+    api.post<{ stockCount: StockCount }>('/inventory/stock-counts', data).then(r => r.data),
+  getStockCount: (locationId: string, date?: string) =>
+    api.get<{ stockCount: StockCount | null }>('/inventory/stock-counts', { params: { location_id: locationId, date } }).then(r => r.data),
+  getStockCountHistory: (locationId: string, itemId: string) =>
+    api.get<{ history: StockCountEntry[] }>('/inventory/stock-counts/history', { params: { location_id: locationId, item_id: itemId } }).then(r => r.data),
+  getForecast: (locationId: string) =>
+    api.get<{ forecast: ForecastItem[] }>('/inventory/forecast', { params: { location_id: locationId } }).then(r => r.data),
+};
+
 export const billingApi = {
   checkout: (data: { planId?: string; bundleId?: string; billingInterval?: string; seatQuantity?: number; removeBillingWaiver?: boolean }) =>
     api.post<{ checkoutUrl?: string; waived?: boolean }>('/billing/checkout', data).then(r => r.data),

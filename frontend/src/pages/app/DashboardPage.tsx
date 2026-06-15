@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users, Settings, Shield } from 'lucide-react';
+import { LayoutDashboard, Users, Settings, Shield, ClipboardList, TrendingUp, Package } from 'lucide-react';
 import { Link, useOutletContext } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import { useAuth } from '../../contexts/AuthContext';
@@ -73,6 +73,40 @@ export default function DashboardPage() {
             <p className="text-sm text-dark-400">Test plan entitlements and verify upgrade flows.</p>
           </Link>
         )}
+      </div>
+
+      <h2 className="text-xl font-bold text-white mt-10 mb-4">Inventory</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Link
+          to="/inventory/counts"
+          className="bg-dark-900/50 backdrop-blur-sm border border-dark-800 rounded-2xl p-6 hover:border-dark-700 transition-colors"
+        >
+          <div className="w-12 h-12 rounded-xl bg-amber-500/20 flex items-center justify-center mb-4">
+            <ClipboardList className="w-6 h-6 text-amber-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-white mb-1">Stock Count</h3>
+          <p className="text-sm text-dark-400">Record daily inventory counts for closing shift.</p>
+        </Link>
+        <Link
+          to="/inventory/forecast"
+          className="bg-dark-900/50 backdrop-blur-sm border border-dark-800 rounded-2xl p-6 hover:border-dark-700 transition-colors"
+        >
+          <div className="w-12 h-12 rounded-xl bg-primary-500/20 flex items-center justify-center mb-4">
+            <TrendingUp className="w-6 h-6 text-primary-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-white mb-1">Forecast</h3>
+          <p className="text-sm text-dark-400">View predicted order quantities based on usage.</p>
+        </Link>
+        <Link
+          to="/inventory/config"
+          className="bg-dark-900/50 backdrop-blur-sm border border-dark-800 rounded-2xl p-6 hover:border-dark-700 transition-colors"
+        >
+          <div className="w-12 h-12 rounded-xl bg-violet-500/20 flex items-center justify-center mb-4">
+            <Package className="w-6 h-6 text-violet-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-white mb-1">Stock Config</h3>
+          <p className="text-sm text-dark-400">Manage items, categories, units, and par levels.</p>
+        </Link>
       </div>
     </div>
   );

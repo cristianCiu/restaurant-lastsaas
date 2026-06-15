@@ -36,6 +36,9 @@ import BillingCancelPage from './pages/app/BillingCancelPage';
 import TestEntitlementsPage from './pages/app/TestEntitlementsPage';
 import ActivityPage from './pages/app/ActivityPage';
 import OnboardingPage from './pages/app/OnboardingPage';
+import StockCountsPage from './pages/app/StockCountsPage';
+import ForecastPage from './pages/app/ForecastPage';
+import InventoryConfigPage from './pages/app/InventoryConfigPage';
 
 // Admin pages (lazy — only loaded by root tenant admins)
 const AdminDashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
@@ -162,6 +165,9 @@ export default function App() {
                         <Route path="/activity" element={<ActivityPage />} />
                         <Route path="/test-entitlements" element={<TestEntitlementsPage />} />
                         <Route path="/messages" element={<Suspense fallback={<LazyFallback />}><AdminMessagesPage /></Suspense>} />
+                        <Route path="/inventory/counts" element={<StockCountsPage />} />
+                        <Route path="/inventory/forecast" element={<ForecastPage />} />
+                        <Route path="/inventory/config" element={<InventoryConfigPage />} />
                       </Route>
 
                       {/* Admin routes (root tenant only, enforced by AdminLayout) */}

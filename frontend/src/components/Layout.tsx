@@ -2,6 +2,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Settings, LogOut, Shield, ChevronDown, Bell, CreditCard, Zap,
   FileText, Image, Globe, Star, Heart, BookOpen, MessageCircle, HelpCircle, Sun, Moon, Megaphone,
+  ClipboardList, TrendingUp, Package,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
@@ -86,6 +87,9 @@ export default function Layout() {
   // Build nav items from branding config or fallback to defaults
   const defaultNavItems = [
     { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+    { path: '/inventory/counts', icon: ClipboardList, label: 'Stock Count' },
+    { path: '/inventory/forecast', icon: TrendingUp, label: 'Forecast' },
+    { path: '/inventory/config', icon: Package, label: 'Stock Config' },
     ...(showTeam ? [{ path: '/team', icon: Users, label: 'Team' }] : []),
     { path: '/plan', icon: CreditCard, label: 'Plan' },
     { path: '/settings', icon: Settings, label: 'Settings' },
