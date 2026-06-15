@@ -20,7 +20,7 @@ type StockCount struct {
 	LocationID   primitive.ObjectID `json:"locationId" bson:"locationId" validate:"required"`
 	CountedBy    primitive.ObjectID `json:"countedBy" bson:"countedBy" validate:"required"`
 	Shift        string             `json:"shift" bson:"shift" validate:"required,oneof=close lunch"`
-	Counts       []StockCountEntry  `json:"counts" bson:"counts" validate:"required,min=1,max=500"`
+	Counts       []StockCountEntry  `json:"counts" bson:"counts" validate:"required,min=1,max=500,dive"`
 	Notes        string             `json:"notes,omitempty" bson:"notes,omitempty"`
 	SubmittedAt  time.Time          `json:"submittedAt" bson:"submittedAt" validate:"required"`
 	CreatedAt    time.Time          `json:"createdAt" bson:"createdAt" validate:"required"`

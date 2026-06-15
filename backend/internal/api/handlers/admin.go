@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"lastsaas/internal/apierror"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -171,7 +172,7 @@ func (h *AdminHandler) ListTenants(w http.ResponseWriter, r *http.Request) {
 	// Total count for pagination
 	total, err := h.db.Tenants().CountDocuments(ctx, filter)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to count tenants")
+		apierror.Internal(w, r, "Failed to count tenants")
 		return
 	}
 
@@ -182,14 +183,14 @@ func (h *AdminHandler) ListTenants(w http.ResponseWriter, r *http.Request) {
 		SetLimit(int64(limit))
 	cursor, err := h.db.Tenants().Find(ctx, filter, opts)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch tenants")
+		apierror.Internal(w, r, "Failed to fetch tenants")
 		return
 	}
 	defer cursor.Close(ctx)
 
 	var tenants []models.Tenant
 	if err := cursor.All(ctx, &tenants); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to decode tenants")
+		apierror.Internal(w, r, "Failed to decode tenants")
 		return
 	}
 
@@ -302,14 +303,14 @@ func (h *AdminHandler) ExportTenantsCSV(w http.ResponseWriter, r *http.Request) 
 
 	cursor, err := h.db.Tenants().Find(ctx, filter, opts)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to query tenants")
+		apierror.Internal(w, r, "Failed to query tenants")
 		return
 	}
 	defer cursor.Close(ctx)
 
 	var tenants []models.Tenant
 	if err := cursor.All(ctx, &tenants); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to decode tenants")
+		apierror.Internal(w, r, "Failed to decode tenants")
 		return
 	}
 
@@ -391,20 +392,20 @@ func (h *AdminHandler) GetTenant(w http.ResponseWriter, r *http.Request) {
 	tenantIDStr := mux.Vars(r)["tenantId"]
 	tenantID, err := primitive.ObjectIDFromHex(tenantIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid tenant ID")
+		apierror.BadRequest(w, r, "Invalid tenant ID")
 		return
 	}
 
 	var tenant models.Tenant
 	if err := h.db.Tenants().FindOne(r.Context(), bson.M{"_id": tenantID}).Decode(&tenant); err != nil {
-		respondWithError(w, http.StatusNotFound, "Tenant not found")
+		apierror.NotFound(w, r, "Tenant not found")
 		return
 	}
 
 	// Get members
 	cursor, err := h.db.TenantMemberships().Find(r.Context(), bson.M{"tenantId": tenantID})
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch members")
+		apierror.Internal(w, r, "Failed to fetch members")
 		return
 	}
 	defer cursor.Close(r.Context())
@@ -456,19 +457,19 @@ func (h *AdminHandler) UpdateTenantStatus(w http.ResponseWriter, r *http.Request
 	tenantIDStr := mux.Vars(r)["tenantId"]
 	tenantID, err := primitive.ObjectIDFromHex(tenantIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid tenant ID")
+		apierror.BadRequest(w, r, "Invalid tenant ID")
 		return
 	}
 
 	var tenant models.Tenant
 	if err := h.db.Tenants().FindOne(r.Context(), bson.M{"_id": tenantID}).Decode(&tenant); err != nil {
-		respondWithError(w, http.StatusNotFound, "Tenant not found")
+		apierror.NotFound(w, r, "Tenant not found")
 		return
 	}
 
 	// Cannot deactivate the root tenant
 	if tenant.IsRoot {
-		respondWithError(w, http.StatusForbidden, "Cannot modify the root tenant status")
+		apierror.Forbidden(w, r, "Cannot modify the root tenant status")
 		return
 	}
 
@@ -476,7 +477,7 @@ func (h *AdminHandler) UpdateTenantStatus(w http.ResponseWriter, r *http.Request
 		IsActive bool `json:"isActive"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
@@ -561,7 +562,7 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	// Total count for pagination
 	total, err := h.db.Users().CountDocuments(ctx, filter)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to count users")
+		apierror.Internal(w, r, "Failed to count users")
 		return
 	}
 
@@ -572,14 +573,14 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		SetLimit(int64(limit))
 	cursor, err := h.db.Users().Find(ctx, filter, opts)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch users")
+		apierror.Internal(w, r, "Failed to fetch users")
 		return
 	}
 	defer cursor.Close(ctx)
 
 	var users []models.User
 	if err := cursor.All(ctx, &users); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to decode users")
+		apierror.Internal(w, r, "Failed to decode users")
 		return
 	}
 
@@ -658,14 +659,14 @@ func (h *AdminHandler) ExportUsersCSV(w http.ResponseWriter, r *http.Request) {
 
 	cursor, err := h.db.Users().Find(ctx, filter, opts)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to query users")
+		apierror.Internal(w, r, "Failed to query users")
 		return
 	}
 	defer cursor.Close(ctx)
 
 	var users []models.User
 	if err := cursor.All(ctx, &users); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to decode users")
+		apierror.Internal(w, r, "Failed to decode users")
 		return
 	}
 
@@ -723,14 +724,14 @@ func (h *AdminHandler) UpdateUserStatus(w http.ResponseWriter, r *http.Request) 
 	userIDStr := mux.Vars(r)["userId"]
 	userID, err := primitive.ObjectIDFromHex(userIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		apierror.BadRequest(w, r, "Invalid user ID")
 		return
 	}
 
 	// Non-owners cannot deactivate the root tenant owner
 	actingMembership, _ := middleware.GetMembershipFromContext(r.Context())
 	if actingMembership.Role != models.RoleOwner && h.isRootTenantOwner(r.Context(), userID) {
-		respondWithError(w, http.StatusForbidden, "Cannot modify the root tenant owner")
+		apierror.Forbidden(w, r, "Cannot modify the root tenant owner")
 		return
 	}
 
@@ -738,7 +739,7 @@ func (h *AdminHandler) UpdateUserStatus(w http.ResponseWriter, r *http.Request) 
 		IsActive bool `json:"isActive"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
@@ -747,7 +748,7 @@ func (h *AdminHandler) UpdateUserStatus(w http.ResponseWriter, r *http.Request) 
 		bson.M{"$set": bson.M{"isActive": req.IsActive, "updatedAt": time.Now()}},
 	)
 	if err != nil || result.MatchedCount == 0 {
-		respondWithError(w, http.StatusNotFound, "User not found")
+		apierror.NotFound(w, r, "User not found")
 		return
 	}
 
@@ -876,19 +877,19 @@ type UserMembershipDetail struct {
 func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	userID, err := primitive.ObjectIDFromHex(mux.Vars(r)["userId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		apierror.BadRequest(w, r, "Invalid user ID")
 		return
 	}
 
 	var user models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"_id": userID}).Decode(&user); err != nil {
-		respondWithError(w, http.StatusNotFound, "User not found")
+		apierror.NotFound(w, r, "User not found")
 		return
 	}
 
 	cursor, err := h.db.TenantMemberships().Find(r.Context(), bson.M{"userId": userID})
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch memberships")
+		apierror.Internal(w, r, "Failed to fetch memberships")
 		return
 	}
 	defer cursor.Close(r.Context())
@@ -987,14 +988,14 @@ func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	userID, err := primitive.ObjectIDFromHex(mux.Vars(r)["userId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		apierror.BadRequest(w, r, "Invalid user ID")
 		return
 	}
 
 	// Non-owners cannot modify the root tenant owner
 	actingMembership, _ := middleware.GetMembershipFromContext(r.Context())
 	if actingMembership.Role != models.RoleOwner && h.isRootTenantOwner(r.Context(), userID) {
-		respondWithError(w, http.StatusForbidden, "Cannot modify the root tenant owner")
+		apierror.Forbidden(w, r, "Cannot modify the root tenant owner")
 		return
 	}
 
@@ -1003,13 +1004,13 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName *string `json:"displayName"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
 	var user models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"_id": userID}).Decode(&user); err != nil {
-		respondWithError(w, http.StatusNotFound, "User not found")
+		apierror.NotFound(w, r, "User not found")
 		return
 	}
 
@@ -1019,13 +1020,13 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Email != nil {
 		newEmail := strings.TrimSpace(strings.ToLower(*req.Email))
 		if newEmail == "" {
-			respondWithError(w, http.StatusBadRequest, "Email cannot be empty")
+			apierror.BadRequest(w, r, "Email cannot be empty")
 			return
 		}
 		if newEmail != user.Email {
 			count, _ := h.db.Users().CountDocuments(r.Context(), bson.M{"email": newEmail, "_id": bson.M{"$ne": userID}})
 			if count > 0 {
-				respondWithError(w, http.StatusConflict, "Email already in use by another account")
+				apierror.Conflict(w, r, "Email already in use by another account")
 				return
 			}
 			updates["email"] = newEmail
@@ -1050,19 +1051,19 @@ func (h *AdminHandler) UpdateUserRole(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID, err := primitive.ObjectIDFromHex(vars["userId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		apierror.BadRequest(w, r, "Invalid user ID")
 		return
 	}
 	tenantID, err := primitive.ObjectIDFromHex(vars["tenantId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid tenant ID")
+		apierror.BadRequest(w, r, "Invalid tenant ID")
 		return
 	}
 
 	// Non-owners cannot change the root tenant owner's role
 	actingMembership, _ := middleware.GetMembershipFromContext(r.Context())
 	if actingMembership.Role != models.RoleOwner && h.isRootTenantOwner(r.Context(), userID) {
-		respondWithError(w, http.StatusForbidden, "Cannot modify the root tenant owner's role")
+		apierror.Forbidden(w, r, "Cannot modify the root tenant owner's role")
 		return
 	}
 
@@ -1070,23 +1071,23 @@ func (h *AdminHandler) UpdateUserRole(w http.ResponseWriter, r *http.Request) {
 		Role models.MemberRole `json:"role"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 	if !models.ValidRole(req.Role) {
-		respondWithError(w, http.StatusBadRequest, "Invalid role")
+		apierror.BadRequest(w, r, "Invalid role")
 		return
 	}
 
 	var tenant models.Tenant
 	if err := h.db.Tenants().FindOne(r.Context(), bson.M{"_id": tenantID}).Decode(&tenant); err != nil {
-		respondWithError(w, http.StatusNotFound, "Tenant not found")
+		apierror.NotFound(w, r, "Tenant not found")
 		return
 	}
 
 	// Block root tenant ownership transfer via API
 	if tenant.IsRoot && req.Role == models.RoleOwner {
-		respondWithError(w, http.StatusForbidden, "Root tenant ownership can only be transferred via the CLI command: lastsaas transfer-root-owner")
+		apierror.Forbidden(w, r, "Root tenant ownership can only be transferred via the CLI command: lastsaas transfer-root-owner")
 		return
 	}
 
@@ -1112,7 +1113,7 @@ func (h *AdminHandler) UpdateUserRole(w http.ResponseWriter, r *http.Request) {
 		bson.M{"$set": bson.M{"role": req.Role, "updatedAt": now}},
 	)
 	if err != nil || result.MatchedCount == 0 {
-		respondWithError(w, http.StatusNotFound, "Membership not found")
+		apierror.NotFound(w, r, "Membership not found")
 		return
 	}
 
@@ -1134,7 +1135,7 @@ type tenantDeletionInfo struct {
 func (h *AdminHandler) PreflightDeleteUser(w http.ResponseWriter, r *http.Request) {
 	userID, err := primitive.ObjectIDFromHex(mux.Vars(r)["userId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		apierror.BadRequest(w, r, "Invalid user ID")
 		return
 	}
 
@@ -1151,13 +1152,13 @@ func (h *AdminHandler) PreflightDeleteUser(w http.ResponseWriter, r *http.Reques
 
 	cursor, err := h.db.TenantMemberships().Find(ctx, bson.M{"userId": userID, "role": models.RoleOwner})
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to query memberships")
+		apierror.Internal(w, r, "Failed to query memberships")
 		return
 	}
 	var ownerships []models.TenantMembership
 	if err := cursor.All(ctx, &ownerships); err != nil {
 		cursor.Close(ctx)
-		respondWithError(w, http.StatusInternalServerError, "Failed to read memberships")
+		apierror.Internal(w, r, "Failed to read memberships")
 		return
 	}
 	cursor.Close(ctx)
@@ -1246,19 +1247,19 @@ func (h *AdminHandler) PreflightDeleteUser(w http.ResponseWriter, r *http.Reques
 func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	userID, err := primitive.ObjectIDFromHex(mux.Vars(r)["userId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		apierror.BadRequest(w, r, "Invalid user ID")
 		return
 	}
 
 	actingUser, _ := middleware.GetUserFromContext(r.Context())
 	if actingUser.ID == userID {
-		respondWithError(w, http.StatusForbidden, "Cannot delete your own account")
+		apierror.Forbidden(w, r, "Cannot delete your own account")
 		return
 	}
 
 	var user models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"_id": userID}).Decode(&user); err != nil {
-		respondWithError(w, http.StatusNotFound, "User not found")
+		apierror.NotFound(w, r, "User not found")
 		return
 	}
 
@@ -1267,7 +1268,7 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		ConfirmTenantDeletions []string          `json:"confirmTenantDeletions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 	if req.ReplacementOwners == nil {
@@ -1279,13 +1280,13 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	// Find all memberships
 	cursor, err := h.db.TenantMemberships().Find(ctx, bson.M{"userId": userID})
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to query memberships")
+		apierror.Internal(w, r, "Failed to query memberships")
 		return
 	}
 	var memberships []models.TenantMembership
 	if err := cursor.All(ctx, &memberships); err != nil {
 		cursor.Close(ctx)
-		respondWithError(w, http.StatusInternalServerError, "Failed to read memberships")
+		apierror.Internal(w, r, "Failed to read memberships")
 		return
 	}
 	cursor.Close(ctx)
@@ -1298,19 +1299,19 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 		var tenant models.Tenant
 		if err := h.db.Tenants().FindOne(ctx, bson.M{"_id": m.TenantID}).Decode(&tenant); err != nil {
-			respondWithError(w, http.StatusInternalServerError, "Failed to look up tenant")
+			apierror.Internal(w, r, "Failed to look up tenant")
 			return
 		}
 
 		if tenant.IsRoot {
-			respondWithError(w, http.StatusForbidden, "Cannot delete the root tenant owner. Transfer ownership first via CLI.")
+			apierror.Forbidden(w, r, "Cannot delete the root tenant owner. Transfer ownership first via CLI.")
 			return
 		}
 
 		if replacementStr, ok := req.ReplacementOwners[m.TenantID.Hex()]; ok {
 			replacementID, err := primitive.ObjectIDFromHex(replacementStr)
 			if err != nil {
-				respondWithError(w, http.StatusBadRequest, "Invalid replacement owner ID")
+				apierror.BadRequest(w, r, "Invalid replacement owner ID")
 				return
 			}
 			result, _ := h.db.TenantMemberships().UpdateOne(ctx,
@@ -1318,7 +1319,7 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 				bson.M{"$set": bson.M{"role": models.RoleOwner, "updatedAt": time.Now()}},
 			)
 			if result.MatchedCount == 0 {
-				respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Replacement owner is not a member of tenant '%s'", tenant.Name))
+				apierror.BadRequest(w, r, fmt.Sprintf("Replacement owner is not a member of tenant '%s'", tenant.Name))
 				return
 			}
 			h.syslog.HighWithUser(ctx,
@@ -1330,7 +1331,7 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 				"userId":   bson.M{"$ne": userID},
 			})
 			if otherCount > 0 {
-				respondWithError(w, http.StatusBadRequest, fmt.Sprintf("User is owner of tenant '%s' which has other members. Provide a replacement owner.", tenant.Name))
+				apierror.BadRequest(w, r, fmt.Sprintf("User is owner of tenant '%s' which has other members. Provide a replacement owner.", tenant.Name))
 				return
 			}
 			// No other members — confirm tenant deletion
@@ -1342,7 +1343,7 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if !confirmed {
-				respondWithError(w, http.StatusBadRequest, fmt.Sprintf("User is the sole member of tenant '%s'. Confirm tenant deletion.", tenant.Name))
+				apierror.BadRequest(w, r, fmt.Sprintf("User is the sole member of tenant '%s'. Confirm tenant deletion.", tenant.Name))
 				return
 			}
 			h.db.TenantMemberships().DeleteMany(ctx, bson.M{"tenantId": m.TenantID})
@@ -1388,7 +1389,7 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := primitive.ObjectIDFromHex(mux.Vars(r)["tenantId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid tenant ID")
+		apierror.BadRequest(w, r, "Invalid tenant ID")
 		return
 	}
 
@@ -1399,13 +1400,13 @@ func (h *AdminHandler) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 		PurchasedCredits    *int64  `json:"purchasedCredits"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
 	var tenant models.Tenant
 	if err := h.db.Tenants().FindOne(r.Context(), bson.M{"_id": tenantID}).Decode(&tenant); err != nil {
-		respondWithError(w, http.StatusNotFound, "Tenant not found")
+		apierror.NotFound(w, r, "Tenant not found")
 		return
 	}
 
@@ -1415,7 +1416,7 @@ func (h *AdminHandler) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
 		if name == "" {
-			respondWithError(w, http.StatusBadRequest, "Tenant name cannot be empty")
+			apierror.BadRequest(w, r, "Tenant name cannot be empty")
 			return
 		}
 		if name != tenant.Name {
@@ -1464,31 +1465,31 @@ func (h *AdminHandler) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) ImpersonateUser(w http.ResponseWriter, r *http.Request) {
 	if h.jwtService == nil {
-		respondWithError(w, http.StatusInternalServerError, "JWT service not configured")
+		apierror.Internal(w, r, "JWT service not configured")
 		return
 	}
 
 	actingUser, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	targetUserID, err := primitive.ObjectIDFromHex(mux.Vars(r)["userId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		apierror.BadRequest(w, r, "Invalid user ID")
 		return
 	}
 
 	// Cannot impersonate self
 	if targetUserID == actingUser.ID {
-		respondWithError(w, http.StatusBadRequest, "Cannot impersonate yourself")
+		apierror.BadRequest(w, r, "Cannot impersonate yourself")
 		return
 	}
 
 	var targetUser models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"_id": targetUserID}).Decode(&targetUser); err != nil {
-		respondWithError(w, http.StatusNotFound, "User not found")
+		apierror.NotFound(w, r, "User not found")
 		return
 	}
 
@@ -1502,7 +1503,7 @@ func (h *AdminHandler) ImpersonateUser(w http.ResponseWriter, r *http.Request) {
 			"role":     models.RoleOwner,
 		}).Decode(&membership)
 		if err == nil {
-			respondWithError(w, http.StatusForbidden, "Cannot impersonate root tenant owners")
+			apierror.Forbidden(w, r, "Cannot impersonate root tenant owners")
 			return
 		}
 	}
@@ -1514,7 +1515,7 @@ func (h *AdminHandler) ImpersonateUser(w http.ResponseWriter, r *http.Request) {
 		actingUser.ID.Hex(),
 	)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to generate impersonation token")
+		apierror.Internal(w, r, "Failed to generate impersonation token")
 		return
 	}
 
@@ -1537,7 +1538,7 @@ func (h *AdminHandler) ImpersonateUser(w http.ResponseWriter, r *http.Request) {
 	// Get target user's memberships
 	cursor, err := h.db.TenantMemberships().Find(r.Context(), bson.M{"userId": targetUserID})
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch memberships")
+		apierror.Internal(w, r, "Failed to fetch memberships")
 		return
 	}
 	defer cursor.Close(r.Context())
@@ -1582,21 +1583,21 @@ func (h *AdminHandler) ListRootMembers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	rootTenant, err := h.getRootTenant(ctx)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Root tenant not found")
+		apierror.Internal(w, r, "Root tenant not found")
 		return
 	}
 
 	// Fetch memberships
 	cursor, err := h.db.TenantMemberships().Find(ctx, bson.M{"tenantId": rootTenant.ID})
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch members")
+		apierror.Internal(w, r, "Failed to fetch members")
 		return
 	}
 	defer cursor.Close(ctx)
 
 	var memberships []models.TenantMembership
 	if err := cursor.All(ctx, &memberships); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to decode members")
+		apierror.Internal(w, r, "Failed to decode members")
 		return
 	}
 
@@ -1664,42 +1665,42 @@ func (h *AdminHandler) InviteRootMember(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	rootTenant, err := h.getRootTenant(ctx)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Root tenant not found")
+		apierror.Internal(w, r, "Root tenant not found")
 		return
 	}
 
 	membership, ok := middleware.GetMembershipFromContext(ctx)
 	if !ok {
-		respondWithError(w, http.StatusForbidden, "Membership context missing")
+		apierror.Forbidden(w, r, "Membership context missing")
 		return
 	}
 	user, ok := middleware.GetUserFromContext(ctx)
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	var req InviteMemberRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" {
-		respondWithError(w, http.StatusBadRequest, "Email is required")
+		apierror.BadRequest(w, r, "Email is required")
 		return
 	}
 	if req.Role == models.RoleOwner {
-		respondWithError(w, http.StatusBadRequest, "Cannot invite as owner. Use transfer ownership instead.")
+		apierror.BadRequest(w, r, "Cannot invite as owner. Use transfer ownership instead.")
 		return
 	}
 	if !models.ValidRole(req.Role) {
-		respondWithError(w, http.StatusBadRequest, "Invalid role")
+		apierror.BadRequest(w, r, "Invalid role")
 		return
 	}
 	if req.Role == models.RoleAdmin && membership.Role != models.RoleOwner {
-		respondWithError(w, http.StatusForbidden, "Only owners can invite admins")
+		apierror.Forbidden(w, r, "Only owners can invite admins")
 		return
 	}
 
@@ -1711,7 +1712,7 @@ func (h *AdminHandler) InviteRootMember(w http.ResponseWriter, r *http.Request) 
 			"tenantId": rootTenant.ID,
 		})
 		if count > 0 {
-			respondWithError(w, http.StatusConflict, "User is already a member of the root tenant")
+			apierror.Conflict(w, r, "User is already a member of the root tenant")
 			return
 		}
 	}
@@ -1724,7 +1725,7 @@ func (h *AdminHandler) InviteRootMember(w http.ResponseWriter, r *http.Request) 
 		"expiresAt": bson.M{"$gt": time.Now()},
 	})
 	if count > 0 {
-		respondWithError(w, http.StatusConflict, "An invitation has already been sent to this email")
+		apierror.Conflict(w, r, "An invitation has already been sent to this email")
 		return
 	}
 
@@ -1746,7 +1747,7 @@ func (h *AdminHandler) InviteRootMember(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if _, err := h.db.Invitations().InsertOne(ctx, invitation); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to create invitation")
+		apierror.Internal(w, r, "Failed to create invitation")
 		return
 	}
 
@@ -1784,24 +1785,24 @@ func (h *AdminHandler) RemoveRootMember(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	rootTenant, err := h.getRootTenant(ctx)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Root tenant not found")
+		apierror.Internal(w, r, "Root tenant not found")
 		return
 	}
 
 	currentMembership, ok := middleware.GetMembershipFromContext(ctx)
 	if !ok {
-		respondWithError(w, http.StatusForbidden, "Membership context missing")
+		apierror.Forbidden(w, r, "Membership context missing")
 		return
 	}
 
 	targetUserID, err := primitive.ObjectIDFromHex(mux.Vars(r)["userId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		apierror.BadRequest(w, r, "Invalid user ID")
 		return
 	}
 
 	if targetUserID == currentMembership.UserID {
-		respondWithError(w, http.StatusBadRequest, "Cannot remove yourself")
+		apierror.BadRequest(w, r, "Cannot remove yourself")
 		return
 	}
 
@@ -1810,22 +1811,22 @@ func (h *AdminHandler) RemoveRootMember(w http.ResponseWriter, r *http.Request) 
 		"userId":   targetUserID,
 		"tenantId": rootTenant.ID,
 	}).Decode(&targetMembership); err != nil {
-		respondWithError(w, http.StatusNotFound, "Member not found")
+		apierror.NotFound(w, r, "Member not found")
 		return
 	}
 
 	if targetMembership.Role == models.RoleOwner {
-		respondWithError(w, http.StatusForbidden, "Cannot remove the owner. Transfer ownership first.")
+		apierror.Forbidden(w, r, "Cannot remove the owner. Transfer ownership first.")
 		return
 	}
 
 	if currentMembership.Role == models.RoleAdmin && targetMembership.Role != models.RoleUser {
-		respondWithError(w, http.StatusForbidden, "Admins can only remove users")
+		apierror.Forbidden(w, r, "Admins can only remove users")
 		return
 	}
 
 	if _, err := h.db.TenantMemberships().DeleteOne(ctx, bson.M{"_id": targetMembership.ID}); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to remove member")
+		apierror.Internal(w, r, "Failed to remove member")
 		return
 	}
 
@@ -1851,44 +1852,44 @@ func (h *AdminHandler) ChangeRootMemberRole(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	rootTenant, err := h.getRootTenant(ctx)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Root tenant not found")
+		apierror.Internal(w, r, "Root tenant not found")
 		return
 	}
 
 	currentMembership, ok := middleware.GetMembershipFromContext(ctx)
 	if !ok {
-		respondWithError(w, http.StatusForbidden, "Membership context missing")
+		apierror.Forbidden(w, r, "Membership context missing")
 		return
 	}
 
 	if currentMembership.Role != models.RoleOwner {
-		respondWithError(w, http.StatusForbidden, "Only the owner can change roles")
+		apierror.Forbidden(w, r, "Only the owner can change roles")
 		return
 	}
 
 	targetUserID, err := primitive.ObjectIDFromHex(mux.Vars(r)["userId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		apierror.BadRequest(w, r, "Invalid user ID")
 		return
 	}
 
 	if targetUserID == currentMembership.UserID {
-		respondWithError(w, http.StatusBadRequest, "Cannot change your own role")
+		apierror.BadRequest(w, r, "Cannot change your own role")
 		return
 	}
 
 	var req ChangeRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
 	if req.Role == models.RoleOwner {
-		respondWithError(w, http.StatusBadRequest, "Cannot set role to owner. Use transfer ownership instead.")
+		apierror.BadRequest(w, r, "Cannot set role to owner. Use transfer ownership instead.")
 		return
 	}
 	if !models.ValidRole(req.Role) {
-		respondWithError(w, http.StatusBadRequest, "Invalid role")
+		apierror.BadRequest(w, r, "Invalid role")
 		return
 	}
 
@@ -1897,7 +1898,7 @@ func (h *AdminHandler) ChangeRootMemberRole(w http.ResponseWriter, r *http.Reque
 		bson.M{"$set": bson.M{"role": req.Role, "updatedAt": time.Now()}},
 	)
 	if err != nil || result.MatchedCount == 0 {
-		respondWithError(w, http.StatusNotFound, "Member not found")
+		apierror.NotFound(w, r, "Member not found")
 		return
 	}
 
@@ -1924,13 +1925,13 @@ func (h *AdminHandler) CancelRootInvitation(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	rootTenant, err := h.getRootTenant(ctx)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Root tenant not found")
+		apierror.Internal(w, r, "Root tenant not found")
 		return
 	}
 
 	invID, err := primitive.ObjectIDFromHex(mux.Vars(r)["invitationId"])
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid invitation ID")
+		apierror.BadRequest(w, r, "Invalid invitation ID")
 		return
 	}
 
@@ -1940,7 +1941,7 @@ func (h *AdminHandler) CancelRootInvitation(w http.ResponseWriter, r *http.Reque
 		"status":   models.InvitationPending,
 	})
 	if err != nil || result.DeletedCount == 0 {
-		respondWithError(w, http.StatusNotFound, "Invitation not found")
+		apierror.NotFound(w, r, "Invitation not found")
 		return
 	}
 

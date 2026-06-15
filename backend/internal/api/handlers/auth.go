@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"lastsaas/internal/apierror"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -193,7 +194,7 @@ func (h *AuthHandler) GetProviders(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
@@ -201,30 +202,30 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
 
 	if req.Email == "" || req.Password == "" || req.DisplayName == "" {
-		respondWithError(w, http.StatusBadRequest, "Email, password, and display name are required")
+		apierror.BadRequest(w, r, "Email, password, and display name are required")
 		return
 	}
 
 	if !isValidEmail(req.Email) {
-		respondWithError(w, http.StatusBadRequest, "Invalid email format")
+		apierror.BadRequest(w, r, "Invalid email format")
 		return
 	}
 
 	if err := h.passwordService.ValidatePasswordStrength(req.Password); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
+		apierror.BadRequest(w, r, err.Error())
 		return
 	}
 
 	// Check email uniqueness
 	var existing models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"email": req.Email}).Decode(&existing); err == nil {
-		respondWithError(w, http.StatusConflict, "Unable to create account with these details")
+		apierror.Conflict(w, r, "Unable to create account with these details")
 		return
 	}
 
 	passwordHash, err := h.passwordService.HashPassword(req.Password)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to process password")
+		apierror.Internal(w, r, "Failed to process password")
 		return
 	}
 
@@ -242,12 +243,12 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validation.Validate(&user); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
+		apierror.BadRequest(w, r, err.Error())
 		return
 	}
 
 	if _, err := h.db.Users().InsertOne(r.Context(), user); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to create user")
+		apierror.Internal(w, r, "Failed to create user")
 		return
 	}
 
@@ -273,12 +274,12 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	// Generate tokens
 	accessToken, refreshToken, refreshTTL, err := h.generateTokenPair(user.ID.Hex(), user.Email, user.DisplayName)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to generate token")
+		apierror.Internal(w, r, "Failed to generate token")
 		return
 	}
 	if err := storeRefreshToken(r, h.db, user.ID, refreshToken, refreshTTL); err != nil {
 		slog.Error("Failed to store refresh token", "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to create session")
+		apierror.Internal(w, r, "Failed to create session")
 		return
 	}
 
@@ -309,14 +310,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 
 	if req.Email == "" || req.Password == "" {
-		respondWithError(w, http.StatusBadRequest, "Email and password are required")
+		apierror.BadRequest(w, r, "Email and password are required")
 		return
 	}
 
@@ -324,18 +325,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"email": req.Email}).Decode(&user); err != nil {
 		// Perform dummy bcrypt to equalize response timing and prevent account enumeration
 		h.passwordService.DummyCompare(req.Password)
-		respondWithError(w, http.StatusUnauthorized, "Invalid email or password")
+		apierror.Unauthorized(w, r, "Invalid email or password")
 		return
 	}
 
 	// Check account lockout
 	if user.IsLocked() {
-		respondWithError(w, http.StatusTooManyRequests, "Account is temporarily locked. Please try again later.")
+		apierror.Write(w, http.StatusTooManyRequests, apierror.CodeAccountLocked, "Account is temporarily locked. Please try again later.", r)
 		return
 	}
 
 	if !user.HasAuthMethod(models.AuthMethodPassword) {
-		respondWithError(w, http.StatusUnauthorized, "Invalid email or password")
+		apierror.Unauthorized(w, r, "Invalid email or password")
 		return
 	}
 
@@ -367,12 +368,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			h.syslog.LogCatWithUser(r.Context(), models.LogLow, models.LogCatAuth,
 				fmt.Sprintf("Failed login attempt for %s", user.Email), user.ID)
 		}
-		respondWithError(w, http.StatusUnauthorized, "Invalid email or password")
+		apierror.Unauthorized(w, r, "Invalid email or password")
 		return
 	}
 
 	if !user.IsActive {
-		respondWithError(w, http.StatusUnauthorized, "Account is inactive")
+		apierror.Unauthorized(w, r, "Account is inactive")
 		return
 	}
 
@@ -391,7 +392,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if user.TOTPEnabled {
 		mfaToken, err := h.jwtService.GenerateMFAToken(user.ID.Hex(), user.Email)
 		if err != nil {
-			respondWithError(w, http.StatusInternalServerError, "Failed to generate token")
+			apierror.Internal(w, r, "Failed to generate token")
 			return
 		}
 		respondWithJSON(w, http.StatusOK, MFARequiredResponse{
@@ -403,12 +404,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	accessToken, refreshToken, refreshTTL, err := h.generateTokenPair(user.ID.Hex(), user.Email, user.DisplayName)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to generate token")
+		apierror.Internal(w, r, "Failed to generate token")
 		return
 	}
 	if err := storeRefreshToken(r, h.db, user.ID, refreshToken, refreshTTL); err != nil {
 		slog.Error("Failed to store refresh token", "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to create session")
+		apierror.Internal(w, r, "Failed to create session")
 		return
 	}
 
@@ -478,13 +479,13 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RefreshToken == "" {
-		respondWithError(w, http.StatusBadRequest, "Refresh token is required")
+		apierror.BadRequest(w, r, "Refresh token is required")
 		return
 	}
 
 	claims, err := h.jwtService.ValidateRefreshToken(req.RefreshToken)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Invalid refresh token")
+		apierror.Unauthorized(w, r, "Invalid refresh token")
 		return
 	}
 
@@ -495,7 +496,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		"tokenHash": tokenHash,
 	}).Decode(&storedToken)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Refresh token not found")
+		apierror.Unauthorized(w, r, "Refresh token not found")
 		return
 	}
 
@@ -508,7 +509,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 			)
 			slog.Warn("Security: refresh token replay detected, family revoked", "userId", storedToken.UserID.Hex(), "familyId", storedToken.FamilyID)
 		}
-		respondWithError(w, http.StatusUnauthorized, "Refresh token has been revoked")
+		apierror.Unauthorized(w, r, "Refresh token has been revoked")
 		return
 	}
 
@@ -520,24 +521,24 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := primitive.ObjectIDFromHex(claims.UserID)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Invalid user ID")
+		apierror.Unauthorized(w, r, "Invalid user ID")
 		return
 	}
 
 	var user models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"_id": userID, "isActive": true}).Decode(&user); err != nil {
-		respondWithError(w, http.StatusUnauthorized, "User not found")
+		apierror.Unauthorized(w, r, "User not found")
 		return
 	}
 
 	accessToken, refreshToken, refreshTTL, err := h.generateTokenPair(user.ID.Hex(), user.Email, user.DisplayName)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to generate token")
+		apierror.Internal(w, r, "Failed to generate token")
 		return
 	}
 	if err := storeRefreshToken(r, h.db, user.ID, refreshToken, refreshTTL, storedToken.FamilyID); err != nil {
 		slog.Error("Failed to store refresh token", "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to create session")
+		apierror.Internal(w, r, "Failed to create session")
 		return
 	}
 
@@ -561,7 +562,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -576,7 +577,7 @@ func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	var req VerifyEmailRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
-		respondWithError(w, http.StatusBadRequest, "Token is required")
+		apierror.BadRequest(w, r, "Token is required")
 		return
 	}
 
@@ -594,7 +595,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		bson.M{"$set": bson.M{"usedAt": now}},
 	).Decode(&token)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid or expired verification token")
+		apierror.BadRequest(w, r, "Invalid or expired verification token")
 		return
 	}
 
@@ -602,7 +603,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		"$set": bson.M{"emailVerified": true, "updatedAt": now},
 	}); err != nil {
 		slog.Error("Failed to mark email as verified", "userId", token.UserID.Hex(), "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to verify email")
+		apierror.Internal(w, r, "Failed to verify email")
 		return
 	}
 
@@ -626,7 +627,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) ResendVerification(w http.ResponseWriter, r *http.Request) {
 	var req ResendVerificationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" {
-		respondWithError(w, http.StatusBadRequest, "Email is required")
+		apierror.BadRequest(w, r, "Email is required")
 		return
 	}
 
@@ -644,7 +645,7 @@ func (h *AuthHandler) ResendVerification(w http.ResponseWriter, r *http.Request)
 	}
 
 	if user.LastVerificationSent != nil && time.Since(*user.LastVerificationSent) < 60*time.Second {
-		respondWithError(w, http.StatusTooManyRequests, "Please wait before requesting another verification email")
+		apierror.RateLimited(w, r, "Please wait before requesting another verification email")
 		return
 	}
 
@@ -656,7 +657,7 @@ func (h *AuthHandler) ResendVerification(w http.ResponseWriter, r *http.Request)
 func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req ForgotPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" {
-		respondWithError(w, http.StatusBadRequest, "Email is required")
+		apierror.BadRequest(w, r, "Email is required")
 		return
 	}
 
@@ -710,17 +711,17 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req ResetPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
 	if req.Token == "" || req.NewPassword == "" {
-		respondWithError(w, http.StatusBadRequest, "Token and new password are required")
+		apierror.BadRequest(w, r, "Token and new password are required")
 		return
 	}
 
 	if err := h.passwordService.ValidatePasswordStrength(req.NewPassword); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
+		apierror.BadRequest(w, r, err.Error())
 		return
 	}
 
@@ -739,13 +740,13 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		bson.M{"$set": bson.M{"usedAt": now}},
 	).Decode(&token)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid or expired reset token")
+		apierror.BadRequest(w, r, "Invalid or expired reset token")
 		return
 	}
 
 	passwordHash, err := h.passwordService.HashPassword(req.NewPassword)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to process password")
+		apierror.Internal(w, r, "Failed to process password")
 		return
 	}
 
@@ -772,40 +773,40 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	var req ChangePasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
 	if req.NewPassword == "" {
-		respondWithError(w, http.StatusBadRequest, "New password is required")
+		apierror.BadRequest(w, r, "New password is required")
 		return
 	}
 
 	if err := h.passwordService.ValidatePasswordStrength(req.NewPassword); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
+		apierror.BadRequest(w, r, err.Error())
 		return
 	}
 
 	if user.HasAuthMethod(models.AuthMethodPassword) {
 		if req.CurrentPassword == "" {
-			respondWithError(w, http.StatusBadRequest, "Current password is required")
+			apierror.BadRequest(w, r, "Current password is required")
 			return
 		}
 		if err := h.passwordService.ComparePassword(user.PasswordHash, req.CurrentPassword); err != nil {
-			respondWithError(w, http.StatusUnauthorized, "Current password is incorrect")
+			apierror.Unauthorized(w, r, "Current password is incorrect")
 			return
 		}
 	}
 
 	passwordHash, err := h.passwordService.HashPassword(req.NewPassword)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to process password")
+		apierror.Internal(w, r, "Failed to process password")
 		return
 	}
 
@@ -821,7 +822,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := h.db.Users().UpdateOne(r.Context(), bson.M{"_id": user.ID}, update); err != nil {
 		slog.Error("Failed to update password hash", "userId", user.ID.Hex(), "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to change password")
+		apierror.Internal(w, r, "Failed to change password")
 		return
 	}
 
@@ -843,12 +844,12 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) MFASetup(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	if user.TOTPEnabled {
-		respondWithError(w, http.StatusConflict, "MFA is already enabled")
+		apierror.Conflict(w, r, "MFA is already enabled")
 		return
 	}
 
@@ -861,21 +862,21 @@ func (h *AuthHandler) MFASetup(w http.ResponseWriter, r *http.Request) {
 
 	key, err := h.totpService.GenerateSecret(appName, user.Email)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to generate MFA secret")
+		apierror.Internal(w, r, "Failed to generate MFA secret")
 		return
 	}
 
 	// Encrypt and store secret temporarily (not yet enabled)
 	encryptedSecret, err := h.totpService.EncryptSecret(key.Secret())
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to secure MFA secret")
+		apierror.Internal(w, r, "Failed to secure MFA secret")
 		return
 	}
 	if _, err := h.db.Users().UpdateOne(r.Context(), bson.M{"_id": user.ID}, bson.M{
 		"$set": bson.M{"totpSecret": encryptedSecret, "updatedAt": time.Now()},
 	}); err != nil {
 		slog.Error("Failed to store TOTP secret", "userId", user.ID.Hex(), "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to set up MFA")
+		apierror.Internal(w, r, "Failed to set up MFA")
 		return
 	}
 
@@ -888,7 +889,7 @@ func (h *AuthHandler) MFASetup(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) MFAVerifySetup(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -896,32 +897,32 @@ func (h *AuthHandler) MFAVerifySetup(w http.ResponseWriter, r *http.Request) {
 		Code string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
-		respondWithError(w, http.StatusBadRequest, "Code is required")
+		apierror.BadRequest(w, r, "Code is required")
 		return
 	}
 
 	// Re-fetch user to get totpSecret
 	var freshUser models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"_id": user.ID}).Decode(&freshUser); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch user")
+		apierror.Internal(w, r, "Failed to fetch user")
 		return
 	}
 
 	if freshUser.TOTPSecret == "" {
-		respondWithError(w, http.StatusBadRequest, "MFA setup has not been initiated")
+		apierror.BadRequest(w, r, "MFA setup has not been initiated")
 		return
 	}
 
 	decryptedSecret := h.totpService.DecryptSecret(freshUser.TOTPSecret)
 	if !h.totpService.ValidateCodeWithWindow(decryptedSecret, req.Code) {
-		respondWithError(w, http.StatusUnauthorized, "Invalid verification code")
+		apierror.Unauthorized(w, r, "Invalid verification code")
 		return
 	}
 
 	// Generate recovery codes
 	plainCodes, hashedCodes, err := h.totpService.GenerateRecoveryCodes(8)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to generate recovery codes")
+		apierror.Internal(w, r, "Failed to generate recovery codes")
 		return
 	}
 
@@ -935,7 +936,7 @@ func (h *AuthHandler) MFAVerifySetup(w http.ResponseWriter, r *http.Request) {
 		},
 	}); err != nil {
 		slog.Error("Failed to enable MFA", "userId", user.ID.Hex(), "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to enable MFA")
+		apierror.Internal(w, r, "Failed to enable MFA")
 		return
 	}
 
@@ -950,7 +951,7 @@ func (h *AuthHandler) MFAVerifySetup(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) MFADisable(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -958,18 +959,18 @@ func (h *AuthHandler) MFADisable(w http.ResponseWriter, r *http.Request) {
 		Code string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
-		respondWithError(w, http.StatusBadRequest, "Code is required")
+		apierror.BadRequest(w, r, "Code is required")
 		return
 	}
 
 	var freshUser models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"_id": user.ID}).Decode(&freshUser); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch user")
+		apierror.Internal(w, r, "Failed to fetch user")
 		return
 	}
 
 	if !freshUser.TOTPEnabled {
-		respondWithError(w, http.StatusBadRequest, "MFA is not enabled")
+		apierror.BadRequest(w, r, "MFA is not enabled")
 		return
 	}
 
@@ -979,7 +980,7 @@ func (h *AuthHandler) MFADisable(w http.ResponseWriter, r *http.Request) {
 		_, valid = h.totpService.ValidateRecoveryCode(req.Code, freshUser.RecoveryCodes)
 	}
 	if !valid {
-		respondWithError(w, http.StatusUnauthorized, "Invalid code")
+		apierror.Unauthorized(w, r, "Invalid code")
 		return
 	}
 
@@ -993,7 +994,7 @@ func (h *AuthHandler) MFADisable(w http.ResponseWriter, r *http.Request) {
 		},
 	}); err != nil {
 		slog.Error("Failed to disable MFA", "userId", user.ID.Hex(), "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to disable MFA")
+		apierror.Internal(w, r, "Failed to disable MFA")
 		return
 	}
 
@@ -1008,33 +1009,33 @@ func (h *AuthHandler) MFAChallenge(w http.ResponseWriter, r *http.Request) {
 		Code     string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 	if req.MFAToken == "" || req.Code == "" {
-		respondWithError(w, http.StatusBadRequest, "MFA token and code are required")
+		apierror.BadRequest(w, r, "MFA token and code are required")
 		return
 	}
 
 	claims, err := h.jwtService.ValidateAccessToken(req.MFAToken)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Invalid or expired MFA token")
+		apierror.Unauthorized(w, r, "Invalid or expired MFA token")
 		return
 	}
 	if claims.TokenType != "mfa" || !claims.MFAPending {
-		respondWithError(w, http.StatusUnauthorized, "Invalid MFA token")
+		apierror.Unauthorized(w, r, "Invalid MFA token")
 		return
 	}
 
 	userID, err := primitive.ObjectIDFromHex(claims.UserID)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Invalid user")
+		apierror.Unauthorized(w, r, "Invalid user")
 		return
 	}
 
 	var user models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"_id": userID}).Decode(&user); err != nil {
-		respondWithError(w, http.StatusUnauthorized, "User not found")
+		apierror.Unauthorized(w, r, "User not found")
 		return
 	}
 
@@ -1047,7 +1048,7 @@ func (h *AuthHandler) MFAChallenge(w http.ResponseWriter, r *http.Request) {
 	if !valid {
 		h.syslog.LogCatWithUser(r.Context(), models.LogMedium, models.LogCatSecurity,
 			fmt.Sprintf("Failed MFA attempt for user %s", user.Email), user.ID)
-		respondWithError(w, http.StatusUnauthorized, "Invalid code")
+		apierror.Unauthorized(w, r, "Invalid code")
 		return
 	}
 
@@ -1061,12 +1062,12 @@ func (h *AuthHandler) MFAChallenge(w http.ResponseWriter, r *http.Request) {
 	// Generate full auth tokens
 	accessToken, refreshToken, refreshTTL, err := h.generateTokenPair(user.ID.Hex(), user.Email, user.DisplayName)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to generate token")
+		apierror.Internal(w, r, "Failed to generate token")
 		return
 	}
 	if err := storeRefreshToken(r, h.db, user.ID, refreshToken, refreshTTL); err != nil {
 		slog.Error("Failed to store refresh token", "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to create session")
+		apierror.Internal(w, r, "Failed to create session")
 		return
 	}
 
@@ -1093,7 +1094,7 @@ func (h *AuthHandler) MFAChallenge(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) MFARegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -1101,29 +1102,29 @@ func (h *AuthHandler) MFARegenerateRecoveryCodes(w http.ResponseWriter, r *http.
 		Code string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
-		respondWithError(w, http.StatusBadRequest, "Code is required")
+		apierror.BadRequest(w, r, "Code is required")
 		return
 	}
 
 	var freshUser models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"_id": user.ID}).Decode(&freshUser); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch user")
+		apierror.Internal(w, r, "Failed to fetch user")
 		return
 	}
 
 	if !freshUser.TOTPEnabled {
-		respondWithError(w, http.StatusBadRequest, "MFA is not enabled")
+		apierror.BadRequest(w, r, "MFA is not enabled")
 		return
 	}
 
 	if !h.totpService.ValidateCodeWithWindow(h.totpService.DecryptSecret(freshUser.TOTPSecret), req.Code) {
-		respondWithError(w, http.StatusUnauthorized, "Invalid code")
+		apierror.Unauthorized(w, r, "Invalid code")
 		return
 	}
 
 	plainCodes, hashedCodes, err := h.totpService.GenerateRecoveryCodes(8)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to generate recovery codes")
+		apierror.Internal(w, r, "Failed to generate recovery codes")
 		return
 	}
 
@@ -1131,7 +1132,7 @@ func (h *AuthHandler) MFARegenerateRecoveryCodes(w http.ResponseWriter, r *http.
 		"$set": bson.M{"recoveryCodes": hashedCodes, "updatedAt": time.Now()},
 	}); err != nil {
 		slog.Error("Failed to update recovery codes", "userId", user.ID.Hex(), "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to update recovery codes")
+		apierror.Internal(w, r, "Failed to update recovery codes")
 		return
 	}
 
@@ -1144,7 +1145,7 @@ func (h *AuthHandler) MFARegenerateRecoveryCodes(w http.ResponseWriter, r *http.
 
 func (h *AuthHandler) MagicLinkRequest(w http.ResponseWriter, r *http.Request) {
 	if h.getConfig == nil || h.getConfig("auth.magic_link.enabled") != "true" {
-		respondWithError(w, http.StatusNotFound, "Magic link login is not enabled")
+		apierror.NotFound(w, r, "Magic link login is not enabled")
 		return
 	}
 
@@ -1152,7 +1153,7 @@ func (h *AuthHandler) MagicLinkRequest(w http.ResponseWriter, r *http.Request) {
 		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" {
-		respondWithError(w, http.StatusBadRequest, "Email is required")
+		apierror.BadRequest(w, r, "Email is required")
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
@@ -1199,7 +1200,7 @@ func (h *AuthHandler) MagicLinkRequest(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthHandler) MagicLinkVerify(w http.ResponseWriter, r *http.Request) {
 	if h.getConfig == nil || h.getConfig("auth.magic_link.enabled") != "true" {
-		respondWithError(w, http.StatusNotFound, "Magic link login is not enabled")
+		apierror.NotFound(w, r, "Magic link login is not enabled")
 		return
 	}
 
@@ -1207,7 +1208,7 @@ func (h *AuthHandler) MagicLinkVerify(w http.ResponseWriter, r *http.Request) {
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
-		respondWithError(w, http.StatusBadRequest, "Token is required")
+		apierror.BadRequest(w, r, "Token is required")
 		return
 	}
 
@@ -1226,13 +1227,13 @@ func (h *AuthHandler) MagicLinkVerify(w http.ResponseWriter, r *http.Request) {
 		bson.M{"$set": bson.M{"usedAt": now}},
 	).Decode(&token)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid or expired magic link token")
+		apierror.BadRequest(w, r, "Invalid or expired magic link token")
 		return
 	}
 
 	var user models.User
 	if err := h.db.Users().FindOne(r.Context(), bson.M{"_id": token.UserID, "isActive": true}).Decode(&user); err != nil {
-		respondWithError(w, http.StatusUnauthorized, "User not found")
+		apierror.Unauthorized(w, r, "User not found")
 		return
 	}
 
@@ -1246,7 +1247,7 @@ func (h *AuthHandler) MagicLinkVerify(w http.ResponseWriter, r *http.Request) {
 	if user.TOTPEnabled {
 		mfaToken, err := h.jwtService.GenerateMFAToken(user.ID.Hex(), user.Email)
 		if err != nil {
-			respondWithError(w, http.StatusInternalServerError, "Failed to generate token")
+			apierror.Internal(w, r, "Failed to generate token")
 			return
 		}
 		respondWithJSON(w, http.StatusOK, MFARequiredResponse{
@@ -1258,12 +1259,12 @@ func (h *AuthHandler) MagicLinkVerify(w http.ResponseWriter, r *http.Request) {
 
 	accessToken, refreshToken, refreshTTL, err := h.generateTokenPair(user.ID.Hex(), user.Email, user.DisplayName)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to generate token")
+		apierror.Internal(w, r, "Failed to generate token")
 		return
 	}
 	if err := storeRefreshToken(r, h.db, user.ID, refreshToken, refreshTTL); err != nil {
 		slog.Error("Failed to store refresh token", "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to create session")
+		apierror.Internal(w, r, "Failed to create session")
 		return
 	}
 
@@ -1305,7 +1306,7 @@ func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
 		Code string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
-		respondWithError(w, http.StatusBadRequest, "Code is required")
+		apierror.BadRequest(w, r, "Code is required")
 		return
 	}
 
@@ -1317,7 +1318,7 @@ func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
 		bson.M{"$set": bson.M{"usedAt": now}},
 	).Decode(&authCode)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Invalid or expired code")
+		apierror.Unauthorized(w, r, "Invalid or expired code")
 		return
 	}
 
@@ -1339,7 +1340,7 @@ func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthHandler) GoogleOAuth(w http.ResponseWriter, r *http.Request) {
 	if h.googleOAuth == nil {
-		respondWithError(w, http.StatusNotImplemented, "Google OAuth is not configured")
+		apierror.Write(w, http.StatusNotImplemented, apierror.CodeInternal, "Google OAuth is not configured", r)
 		return
 	}
 
@@ -1352,7 +1353,7 @@ func (h *AuthHandler) GoogleOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.db.OAuthStates().InsertOne(r.Context(), oauthState); err != nil {
 		slog.Error("Failed to store OAuth state", "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to initiate OAuth")
+		apierror.Internal(w, r, "Failed to initiate OAuth")
 		return
 	}
 
@@ -1362,7 +1363,7 @@ func (h *AuthHandler) GoogleOAuth(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthHandler) GoogleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if h.googleOAuth == nil {
-		respondWithError(w, http.StatusNotImplemented, "Google OAuth is not configured")
+		apierror.Write(w, http.StatusNotImplemented, apierror.CodeInternal, "Google OAuth is not configured", r)
 		return
 	}
 
@@ -1472,7 +1473,7 @@ func (h *AuthHandler) GoogleOAuthCallback(w http.ResponseWriter, r *http.Request
 
 func (h *AuthHandler) GitHubOAuth(w http.ResponseWriter, r *http.Request) {
 	if h.githubOAuth == nil {
-		respondWithError(w, http.StatusNotImplemented, "GitHub OAuth is not configured")
+		apierror.Write(w, http.StatusNotImplemented, apierror.CodeInternal, "GitHub OAuth is not configured", r)
 		return
 	}
 
@@ -1485,7 +1486,7 @@ func (h *AuthHandler) GitHubOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.db.OAuthStates().InsertOne(r.Context(), oauthState); err != nil {
 		slog.Error("Failed to store OAuth state", "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to initiate OAuth")
+		apierror.Internal(w, r, "Failed to initiate OAuth")
 		return
 	}
 
@@ -1495,7 +1496,7 @@ func (h *AuthHandler) GitHubOAuth(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthHandler) GitHubOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if h.githubOAuth == nil {
-		respondWithError(w, http.StatusNotImplemented, "GitHub OAuth is not configured")
+		apierror.Write(w, http.StatusNotImplemented, apierror.CodeInternal, "GitHub OAuth is not configured", r)
 		return
 	}
 
@@ -1614,7 +1615,7 @@ func (h *AuthHandler) GitHubOAuthCallback(w http.ResponseWriter, r *http.Request
 
 func (h *AuthHandler) MicrosoftOAuth(w http.ResponseWriter, r *http.Request) {
 	if h.microsoftOAuth == nil {
-		respondWithError(w, http.StatusNotImplemented, "Microsoft OAuth is not configured")
+		apierror.Write(w, http.StatusNotImplemented, apierror.CodeInternal, "Microsoft OAuth is not configured", r)
 		return
 	}
 
@@ -1627,7 +1628,7 @@ func (h *AuthHandler) MicrosoftOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.db.OAuthStates().InsertOne(r.Context(), oauthState); err != nil {
 		slog.Error("Failed to store OAuth state", "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to initiate OAuth")
+		apierror.Internal(w, r, "Failed to initiate OAuth")
 		return
 	}
 
@@ -1637,7 +1638,7 @@ func (h *AuthHandler) MicrosoftOAuth(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthHandler) MicrosoftOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if h.microsoftOAuth == nil {
-		respondWithError(w, http.StatusNotImplemented, "Microsoft OAuth is not configured")
+		apierror.Write(w, http.StatusNotImplemented, apierror.CodeInternal, "Microsoft OAuth is not configured", r)
 		return
 	}
 
@@ -1762,7 +1763,7 @@ func (h *AuthHandler) MicrosoftOAuthCallback(w http.ResponseWriter, r *http.Requ
 func (h *AuthHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -1772,14 +1773,14 @@ func (h *AuthHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		"expiresAt": bson.M{"$gt": time.Now()},
 	}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch sessions")
+		apierror.Internal(w, r, "Failed to fetch sessions")
 		return
 	}
 	defer cursor.Close(r.Context())
 
 	var tokens []models.RefreshToken
 	if err := cursor.All(r.Context(), &tokens); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch sessions")
+		apierror.Internal(w, r, "Failed to fetch sessions")
 		return
 	}
 
@@ -1821,19 +1822,19 @@ func (h *AuthHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	sessionID := strings.TrimPrefix(r.URL.Path, "/api/auth/sessions/")
 	if sessionID == "" {
-		respondWithError(w, http.StatusBadRequest, "Session ID is required")
+		apierror.BadRequest(w, r, "Session ID is required")
 		return
 	}
 
 	objID, err := primitive.ObjectIDFromHex(sessionID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid session ID")
+		apierror.BadRequest(w, r, "Invalid session ID")
 		return
 	}
 
@@ -1842,7 +1843,7 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		bson.M{"$set": bson.M{"isRevoked": true}},
 	)
 	if err != nil || result.ModifiedCount == 0 {
-		respondWithError(w, http.StatusNotFound, "Session not found")
+		apierror.NotFound(w, r, "Session not found")
 		return
 	}
 
@@ -1852,7 +1853,7 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -1865,7 +1866,7 @@ func (h *AuthHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) 
 		bson.M{"$set": bson.M{"isRevoked": true}},
 	); err != nil {
 		slog.Error("Failed to revoke all sessions", "userId", user.ID.Hex(), "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to revoke sessions")
+		apierror.Internal(w, r, "Failed to revoke sessions")
 		return
 	}
 
@@ -1877,7 +1878,7 @@ func (h *AuthHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) 
 func (h *AuthHandler) UpdatePreferences(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -1885,14 +1886,14 @@ func (h *AuthHandler) UpdatePreferences(w http.ResponseWriter, r *http.Request) 
 		ThemePreference string `json:"themePreference"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
 	update := bson.M{"updatedAt": time.Now()}
 	if req.ThemePreference != "" {
 		if req.ThemePreference != "dark" && req.ThemePreference != "light" && req.ThemePreference != "system" {
-			respondWithError(w, http.StatusBadRequest, "Invalid theme preference")
+			apierror.BadRequest(w, r, "Invalid theme preference")
 			return
 		}
 		update["themePreference"] = req.ThemePreference
@@ -1908,7 +1909,7 @@ func (h *AuthHandler) UpdatePreferences(w http.ResponseWriter, r *http.Request) 
 func (h *AuthHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -1928,18 +1929,18 @@ func (h *AuthHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request)
 func (h *AuthHandler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	var req AcceptInvitationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
-		respondWithError(w, http.StatusBadRequest, "Invitation token is required")
+		apierror.BadRequest(w, r, "Invitation token is required")
 		return
 	}
 
 	if err := h.acceptInvitationForUser(r.Context(), user.ID, req.Token); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
+		apierror.BadRequest(w, r, err.Error())
 		return
 	}
 
@@ -2187,7 +2188,7 @@ func storeRefreshToken(r *http.Request, database *db.MongoDB, userID primitive.O
 func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -2195,18 +2196,18 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		apierror.BadRequest(w, r, "Invalid request body")
 		return
 	}
 
 	// Verify password if user has password auth
 	if user.HasAuthMethod(models.AuthMethodPassword) {
 		if req.Password == "" {
-			respondWithError(w, http.StatusBadRequest, "Password is required to confirm account deletion")
+			apierror.BadRequest(w, r, "Password is required to confirm account deletion")
 			return
 		}
 		if err := h.passwordService.ComparePassword(user.PasswordHash, req.Password); err != nil {
-			respondWithError(w, http.StatusUnauthorized, "Incorrect password")
+			apierror.Unauthorized(w, r, "Incorrect password")
 			return
 		}
 	}
@@ -2216,14 +2217,14 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	// Check ownership of tenants
 	cursor, err := h.db.TenantMemberships().Find(ctx, bson.M{"userId": user.ID})
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to check memberships")
+		apierror.Internal(w, r, "Failed to check memberships")
 		return
 	}
 	var memberships []models.TenantMembership
 	if err := cursor.All(ctx, &memberships); err != nil {
 		cursor.Close(ctx)
 		slog.Error("Failed to decode memberships during account deletion", "userId", user.ID.Hex(), "error", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to check memberships")
+		apierror.Internal(w, r, "Failed to check memberships")
 		return
 	}
 	cursor.Close(ctx)
@@ -2239,7 +2240,7 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if tenant.IsRoot {
-			respondWithError(w, http.StatusForbidden, "Cannot delete the root tenant owner account. Transfer ownership first.")
+			apierror.Forbidden(w, r, "Cannot delete the root tenant owner account. Transfer ownership first.")
 			return
 		}
 
@@ -2248,7 +2249,7 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 			"userId":   bson.M{"$ne": user.ID},
 		})
 		if otherCount > 0 {
-			respondWithError(w, http.StatusBadRequest, fmt.Sprintf("You are the owner of '%s' which has other members. Transfer ownership before deleting your account.", tenant.Name))
+			apierror.BadRequest(w, r, fmt.Sprintf("You are the owner of '%s' which has other members. Transfer ownership before deleting your account.", tenant.Name))
 			return
 		}
 
@@ -2307,7 +2308,7 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) ExportData(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 

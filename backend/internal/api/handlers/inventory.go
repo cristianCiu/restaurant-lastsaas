@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"lastsaas/internal/apierror"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"lastsaas/internal/middleware"
 	"lastsaas/internal/models"
 	"lastsaas/internal/syslog"
+	"lastsaas/internal/telemetry"
 	"lastsaas/internal/validation"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -21,8 +24,9 @@ import (
 )
 
 type InventoryHandler struct {
-	db     *db.MongoDB
-	syslog syslogiface
+	db           *db.MongoDB
+	syslog       syslogiface
+	telemetrySvc *telemetry.Service
 }
 
 type syslogiface interface {
@@ -30,8 +34,12 @@ type syslogiface interface {
 	LogCatWithUser(ctx context.Context, severity models.LogSeverity, category models.LogCategory, message string, userID primitive.ObjectID)
 }
 
-func NewInventoryHandler(database *db.MongoDB, logger *syslog.Logger) *InventoryHandler {
-	return &InventoryHandler{db: database, syslog: logger}
+func NewInventoryHandler(database *db.MongoDB, logger *syslog.Logger, telemetrySvc *telemetry.Service) *InventoryHandler {
+	return &InventoryHandler{
+		db:           database,
+		syslog:       logger,
+		telemetrySvc: telemetrySvc,
+	}
 }
 
 func (h *InventoryHandler) getTenantID(r *http.Request) (primitive.ObjectID, bool) {
@@ -54,18 +62,18 @@ func (h *InventoryHandler) getUserID(r *http.Request) (primitive.ObjectID, bool)
 func (h *InventoryHandler) ListStockItems(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := h.getTenantID(r)
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	locationIDStr := r.URL.Query().Get("location_id")
 	if locationIDStr == "" {
-		respondWithError(w, http.StatusBadRequest, "location_id is required")
+		apierror.BadRequest(w, r, "location_id is required")
 		return
 	}
 	locationID, err := primitive.ObjectIDFromHex(locationIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid location_id")
+		apierror.BadRequest(w, r, "Invalid location_id")
 		return
 	}
 
@@ -74,14 +82,14 @@ func (h *InventoryHandler) ListStockItems(w http.ResponseWriter, r *http.Request
 
 	cursor, err := h.db.StockItems().Find(r.Context(), filter, opts)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch stock items")
+		apierror.Internal(w, r, "Failed to fetch stock items")
 		return
 	}
 	defer cursor.Close(r.Context())
 
 	var items []models.StockItem
 	if err := cursor.All(r.Context(), &items); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to decode stock items")
+		apierror.Internal(w, r, "Failed to decode stock items")
 		return
 	}
 	if items == nil {
@@ -95,7 +103,12 @@ func (h *InventoryHandler) ListStockItems(w http.ResponseWriter, r *http.Request
 func (h *InventoryHandler) CreateStockItem(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := h.getTenantID(r)
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
+		return
+	}
+	userID, ok := h.getUserID(r)
+	if !ok {
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -108,13 +121,13 @@ func (h *InventoryHandler) CreateStockItem(w http.ResponseWriter, r *http.Reques
 		LeadTimeDays int      `json:"leadTimeDays"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid JSON")
+		apierror.BadRequest(w, r, "Invalid JSON")
 		return
 	}
 
 	locationID, err := primitive.ObjectIDFromHex(input.LocationID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid locationId")
+		apierror.BadRequest(w, r, "Invalid locationId")
 		return
 	}
 
@@ -138,20 +151,35 @@ func (h *InventoryHandler) CreateStockItem(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := validation.Validate(&item); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
+		apierror.BadRequest(w, r, err.Error())
 		return
 	}
 
 	if _, err := h.db.StockItems().InsertOne(r.Context(), item); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
-			respondWithError(w, http.StatusConflict, "A stock item with this name already exists at this location")
+			apierror.Conflict(w, r, "A stock item with this name already exists at this location")
 			return
 		}
-		respondWithError(w, http.StatusInternalServerError, "Failed to create stock item")
+		apierror.Internal(w, r, "Failed to create stock item")
 		return
 	}
 
 	h.syslog.LogCat(r.Context(), models.LogLow, models.LogCatInventory, "Stock item created: "+item.Name)
+
+	if h.telemetrySvc != nil {
+		h.telemetrySvc.Track(r.Context(), models.TelemetryEvent{
+			EventName: "inventory.stock_item_created",
+			Category:  "inventory",
+			UserID:    &userID,
+			TenantID:  &tenantID,
+			Properties: map[string]interface{}{
+				"itemName":   item.Name,
+				"category":   item.Category,
+				"locationId": item.LocationID.Hex(),
+			},
+		})
+	}
+
 	respondWithJSON(w, http.StatusCreated, map[string]interface{}{"stockItem": item})
 }
 
@@ -159,14 +187,14 @@ func (h *InventoryHandler) CreateStockItem(w http.ResponseWriter, r *http.Reques
 func (h *InventoryHandler) UpdateStockItem(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := h.getTenantID(r)
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	itemIDStr := mux.Vars(r)["id"]
 	itemID, err := primitive.ObjectIDFromHex(itemIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid stock item ID")
+		apierror.BadRequest(w, r, "Invalid stock item ID")
 		return
 	}
 
@@ -178,7 +206,7 @@ func (h *InventoryHandler) UpdateStockItem(w http.ResponseWriter, r *http.Reques
 		LeadTimeDays *int     `json:"leadTimeDays,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid JSON")
+		apierror.BadRequest(w, r, "Invalid JSON")
 		return
 	}
 
@@ -203,13 +231,15 @@ func (h *InventoryHandler) UpdateStockItem(w http.ResponseWriter, r *http.Reques
 		bson.M{"_id": itemID, "tenantId": tenantID},
 		bson.M{"$set": update})
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to update stock item")
+		apierror.Internal(w, r, "Failed to update stock item")
 		return
 	}
 	if result.MatchedCount == 0 {
-		respondWithError(w, http.StatusNotFound, "Stock item not found")
+		apierror.NotFound(w, r, "Stock item not found")
 		return
 	}
+
+	h.syslog.LogCat(r.Context(), models.LogLow, models.LogCatInventory, fmt.Sprintf("Stock item updated: %s", itemID.Hex()))
 
 	respondWithJSON(w, http.StatusOK, map[string]string{"message": "Stock item updated"})
 }
@@ -218,26 +248,42 @@ func (h *InventoryHandler) UpdateStockItem(w http.ResponseWriter, r *http.Reques
 func (h *InventoryHandler) DeleteStockItem(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := h.getTenantID(r)
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	itemIDStr := mux.Vars(r)["id"]
 	itemID, err := primitive.ObjectIDFromHex(itemIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid stock item ID")
+		apierror.BadRequest(w, r, "Invalid stock item ID")
 		return
 	}
 
 	result, err := h.db.StockItems().DeleteOne(r.Context(),
 		bson.M{"_id": itemID, "tenantId": tenantID})
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to delete stock item")
+		apierror.Internal(w, r, "Failed to delete stock item")
 		return
 	}
 	if result.DeletedCount == 0 {
-		respondWithError(w, http.StatusNotFound, "Stock item not found")
+		apierror.NotFound(w, r, "Stock item not found")
 		return
+	}
+
+	h.syslog.LogCat(r.Context(), models.LogLow, models.LogCatInventory, fmt.Sprintf("Stock item deleted: %s", itemID.Hex()))
+
+	if h.telemetrySvc != nil {
+		if userID, ok := h.getUserID(r); ok {
+			h.telemetrySvc.Track(r.Context(), models.TelemetryEvent{
+				EventName: "inventory.stock_item_deleted",
+				Category:  "inventory",
+				UserID:    &userID,
+				TenantID:  &tenantID,
+				Properties: map[string]interface{}{
+					"stockItemId": itemID.Hex(),
+				},
+			})
+		}
 	}
 
 	respondWithJSON(w, http.StatusOK, map[string]string{"message": "Stock item deleted"})
@@ -247,29 +293,37 @@ func (h *InventoryHandler) DeleteStockItem(w http.ResponseWriter, r *http.Reques
 func (h *InventoryHandler) SubmitStockCount(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := h.getTenantID(r)
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 	userID, ok := h.getUserID(r)
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
+	type countEntry struct {
+		StockItemID string   `json:"stockItemId"`
+		Quantity    float64  `json:"quantity"`
+		Unit        string   `json:"unit"`
+		Received    *float64 `json:"received,omitempty"`
+		Waste       *float64 `json:"waste,omitempty"`
+	}
+
 	var input struct {
-		LocationID string             `json:"locationId"`
-		Shift      string             `json:"shift"`
-		Counts     []json.RawMessage  `json:"counts"`
-		Notes      string             `json:"notes,omitempty"`
+		LocationID string       `json:"locationId"`
+		Shift      string       `json:"shift"`
+		Counts     []countEntry `json:"counts"`
+		Notes      string       `json:"notes,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid JSON")
+		apierror.BadRequest(w, r, "Invalid JSON")
 		return
 	}
 
 	locationID, err := primitive.ObjectIDFromHex(input.LocationID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid locationId")
+		apierror.BadRequest(w, r, "Invalid locationId")
 		return
 	}
 
@@ -277,35 +331,24 @@ func (h *InventoryHandler) SubmitStockCount(w http.ResponseWriter, r *http.Reque
 		input.Shift = "close"
 	}
 	if len(input.Counts) == 0 {
-		respondWithError(w, http.StatusBadRequest, "At least one count is required")
+		apierror.BadRequest(w, r, "At least one count is required")
 		return
 	}
 
 	now := time.Now()
 	var entries []models.StockCountEntry
-	for _, raw := range input.Counts {
-		var entry struct {
-			StockItemID string   `json:"stockItemId"`
-			Quantity    float64  `json:"quantity"`
-			Unit        string   `json:"unit"`
-			Received    *float64 `json:"received,omitempty"`
-			Waste       *float64 `json:"waste,omitempty"`
-		}
-		if err := json.Unmarshal(raw, &entry); err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid count entry format")
-			return
-		}
-		siID, err := primitive.ObjectIDFromHex(entry.StockItemID)
+	for _, ce := range input.Counts {
+		siID, err := primitive.ObjectIDFromHex(ce.StockItemID)
 		if err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid stockItemId in count entry")
+			apierror.BadRequest(w, r, "Invalid stockItemId in count entry")
 			return
 		}
 		entries = append(entries, models.StockCountEntry{
 			StockItemID: siID,
-			Quantity:    entry.Quantity,
-			Unit:        entry.Unit,
-			Received:    entry.Received,
-			Waste:       entry.Waste,
+			Quantity:    ce.Quantity,
+			Unit:        ce.Unit,
+			Received:    ce.Received,
+			Waste:       ce.Waste,
 		})
 	}
 
@@ -322,7 +365,7 @@ func (h *InventoryHandler) SubmitStockCount(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := validation.Validate(&count); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
+		apierror.BadRequest(w, r, err.Error())
 		return
 	}
 
@@ -332,12 +375,27 @@ func (h *InventoryHandler) SubmitStockCount(w http.ResponseWriter, r *http.Reque
 			h.syslog.LogCat(r.Context(), models.LogMedium, models.LogCatInventory,
 				"Stock count conflict — duplicate shift submission")
 		}
-		respondWithError(w, http.StatusInternalServerError, "Failed to submit stock count")
+		apierror.Internal(w, r, "Failed to submit stock count")
 		return
 	}
 
 	h.syslog.LogCat(r.Context(), models.LogLow, models.LogCatInventory,
-		"Stock count submitted: "+locationID.Hex()+" shift="+input.Shift+" items="+string(len(entries)))
+		fmt.Sprintf("Stock count submitted: %s shift=%s items=%d", locationID.Hex(), input.Shift, len(entries)))
+
+	if h.telemetrySvc != nil {
+		h.telemetrySvc.Track(r.Context(), models.TelemetryEvent{
+			EventName: "inventory.stock_count_submitted",
+			Category:  "inventory",
+			UserID:    &userID,
+			TenantID:  &tenantID,
+			Properties: map[string]interface{}{
+				"locationId": locationID.Hex(),
+				"shift":      input.Shift,
+				"itemCount":  len(entries),
+			},
+		})
+	}
+
 	respondWithJSON(w, http.StatusCreated, map[string]interface{}{"stockCount": count})
 }
 
@@ -345,7 +403,7 @@ func (h *InventoryHandler) SubmitStockCount(w http.ResponseWriter, r *http.Reque
 func (h *InventoryHandler) GetStockCount(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := h.getTenantID(r)
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
@@ -353,12 +411,12 @@ func (h *InventoryHandler) GetStockCount(w http.ResponseWriter, r *http.Request)
 	dateStr := r.URL.Query().Get("date")
 
 	if locationIDStr == "" {
-		respondWithError(w, http.StatusBadRequest, "location_id is required")
+		apierror.BadRequest(w, r, "location_id is required")
 		return
 	}
 	locationID, err := primitive.ObjectIDFromHex(locationIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid location_id")
+		apierror.BadRequest(w, r, "Invalid location_id")
 		return
 	}
 
@@ -366,7 +424,7 @@ func (h *InventoryHandler) GetStockCount(w http.ResponseWriter, r *http.Request)
 	if dateStr != "" {
 		parsed, err := time.Parse("2006-01-02", dateStr)
 		if err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid date format (use YYYY-MM-DD)")
+			apierror.BadRequest(w, r, "Invalid date format (use YYYY-MM-DD)")
 			return
 		}
 		startOfDay := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC)
@@ -381,7 +439,7 @@ func (h *InventoryHandler) GetStockCount(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch stock count")
+		apierror.Internal(w, r, "Failed to fetch stock count")
 		return
 	}
 
@@ -392,25 +450,25 @@ func (h *InventoryHandler) GetStockCount(w http.ResponseWriter, r *http.Request)
 func (h *InventoryHandler) GetStockCountHistory(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := h.getTenantID(r)
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	locationIDStr := r.URL.Query().Get("location_id")
 	itemIDStr := r.URL.Query().Get("item_id")
 	if itemIDStr == "" || locationIDStr == "" {
-		respondWithError(w, http.StatusBadRequest, "item_id and location_id are required")
+		apierror.BadRequest(w, r, "item_id and location_id are required")
 		return
 	}
 
 	itemID, err := primitive.ObjectIDFromHex(itemIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid item_id")
+		apierror.BadRequest(w, r, "Invalid item_id")
 		return
 	}
 	locationID, err := primitive.ObjectIDFromHex(locationIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid location_id")
+		apierror.BadRequest(w, r, "Invalid location_id")
 		return
 	}
 
@@ -433,14 +491,14 @@ func (h *InventoryHandler) GetStockCountHistory(w http.ResponseWriter, r *http.R
 
 	cursor, err := h.db.StockCounts().Aggregate(r.Context(), pipeline)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to fetch history")
+		apierror.Internal(w, r, "Failed to fetch history")
 		return
 	}
 	defer cursor.Close(r.Context())
 
 	var history []bson.M
 	if err := cursor.All(r.Context(), &history); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to decode history")
+		apierror.Internal(w, r, "Failed to decode history")
 		return
 	}
 	if history == nil {
@@ -454,18 +512,18 @@ func (h *InventoryHandler) GetStockCountHistory(w http.ResponseWriter, r *http.R
 func (h *InventoryHandler) GetForecast(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := h.getTenantID(r)
 	if !ok {
-		respondWithError(w, http.StatusUnauthorized, "Not authenticated")
+		apierror.Unauthorized(w, r, "Not authenticated")
 		return
 	}
 
 	locationIDStr := r.URL.Query().Get("location_id")
 	if locationIDStr == "" {
-		respondWithError(w, http.StatusBadRequest, "location_id is required")
+		apierror.BadRequest(w, r, "location_id is required")
 		return
 	}
 	locationID, err := primitive.ObjectIDFromHex(locationIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid location_id")
+		apierror.BadRequest(w, r, "Invalid location_id")
 		return
 	}
 
@@ -511,7 +569,7 @@ func (h *InventoryHandler) GetForecast(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.syslog.LogCat(r.Context(), models.LogHigh, models.LogCatInventory,
 			"Forecast aggregation failed: "+err.Error())
-		respondWithError(w, http.StatusInternalServerError, "Failed to compute forecast")
+		apierror.Internal(w, r, "Failed to compute forecast")
 		return
 	}
 	defer cursor.Close(r.Context())
@@ -530,7 +588,7 @@ func (h *InventoryHandler) GetForecast(w http.ResponseWriter, r *http.Request) {
 
 	var forecast []forecastItem
 	if err := cursor.All(r.Context(), &forecast); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to decode forecast")
+		apierror.Internal(w, r, "Failed to decode forecast")
 		return
 	}
 
