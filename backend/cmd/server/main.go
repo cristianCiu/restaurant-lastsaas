@@ -651,7 +651,7 @@ func main() {
 	billingOwner.HandleFunc("/cancel", billingHandler.CancelSubscription).Methods("POST")
 
 	// Inventory routes (require JWT + tenant)
-	inventoryHandler := handlers.NewInventoryHandler(database, sysLogger)
+	inventoryHandler := handlers.NewInventoryHandler(database, sysLogger, telemetrySvc)
 	inventoryAPI := guarded.PathPrefix("/inventory").Subrouter()
 	inventoryAPI.Use(authMiddleware.RequireAuth)
 	inventoryAPI.Use(tenantMiddleware.RequireTenant)
