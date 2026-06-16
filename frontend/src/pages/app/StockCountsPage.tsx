@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useOutletContext } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { inventoryApi } from '../../api/client';
@@ -7,10 +6,6 @@ import StockItemRow from '../../components/StockItemRow';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import type { StockItem, StockCountEntry } from '../../types';
 import { toast } from 'sonner';
-
-interface LayoutContext {
-  showTeam: boolean;
-}
 
 export default function StockCountsPage() {
   const { user } = useAuth();

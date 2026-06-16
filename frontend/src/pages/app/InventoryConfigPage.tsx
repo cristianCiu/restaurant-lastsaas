@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { Package, Plus, Edit2, Trash2, X, Check } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { inventoryApi } from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -18,7 +17,6 @@ interface ItemForm {
 const emptyForm: ItemForm = { name: '', category: '', unit: '', parLevel: '', leadTimeDays: '1' };
 
 export default function InventoryConfigPage() {
-  const { user } = useAuth();
   const { activeTenant } = useTenant();
   const [items, setItems] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(true);
